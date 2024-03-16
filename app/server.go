@@ -25,10 +25,8 @@ const (
 	HTTP_VERSION = "HTTP/1.1"
 
 	// HTTP RESPONSE CODES
-	HTTP_OK                = "200"
-	HTTP_OK_REPONSE        = HTTP_VERSION + " " + HTTP_OK + " OK" + EOF_DMARKER
-	HTTP_NOT_FOUND         = "404"
-	HTTP_NOT_FOUND_REPONSE = HTTP_VERSION + " " + HTTP_NOT_FOUND + " Not Found" + EOF_DMARKER
+	HTTP_OK        = 200
+	HTTP_NOT_FOUND = 404
 
 	// HTTP REQUEST METHODS
 	HTTP_GET     = "GET"
@@ -47,12 +45,36 @@ const (
 	LOG_WARNING = "WARNING"
 )
 
+type response struct {
+	code    int
+	message string
+}
+
 type request struct {
 	method     string
-	path       string
+	stringUrl  string
 	rawRequest string
 	lines      []string
 	length     uint
+	res        *response
+}
+
+func Ok() *response {
+	res := response{
+		code:    HTTP_OK,
+		message: fmt.Sprintf("%s %v OK %s", HTTP_VERSION, HTTP_OK, EOF_MARKER),
+	}
+
+	return &res
+}
+
+func NotFound() *response {
+	res := response{
+		code:    HTTP_NOT_FOUND,
+		message: fmt.Sprintf("%s %v Not Found %s", HTTP_VERSION, HTTP_NOT_FOUND, EOF_MARKER),
+	}
+
+	return &res
 }
 
 func LogMessage(logLevel string, format string, vargs ...interface{}) (n int, err error) {
@@ -72,9 +94,9 @@ func BuildError(err error, format string, vars ...interface{}) error {
 	return errors.New(errorMessage + embeddedError)
 }
 
-func SendResponse(connection net.Conn, response []byte) {
+func SendResponse(connection net.Conn, res *response) {
 	// send the HTTP 200 OK response
-	_, err := connection.Write(response)
+	_, err := connection.Write([]byte(res.message))
 	// if there's an error exit
 	if err != nil {
 		LogMessage(LOG_ERROR, "Error sending response: %s", err.Error())
@@ -82,8 +104,31 @@ func SendResponse(connection net.Conn, response []byte) {
 	}
 }
 
-func GetMethod(req *request) (*request, error) {
-	return req, nil
+func GetRessource(uri string) (*response, error) {
+	if uri == "/" {
+		return Ok(), nil
+	}
+
+	return nil, BuildError(nil, "Not implemented!")
+}
+
+func GetMethod(req *request, linesTokens []string) (*request, error) {
+	req.method = HTTP_GET
+	req.stringUrl = linesTokens[1]
+
+	// TODO: search for the path to request try to get
+	res, err := GetRessource(req.stringUrl)
+	if err != nil {
+
+		if res == nil {
+			res = NotFound()
+		}
+
+		err = BuildError(err, "Ressource not found at %s", req.stringUrl)
+	}
+
+	req.res = res
+	return req, err
 }
 
 func ParseMethod(req *request) (*request, error) {
@@ -92,7 +137,7 @@ func ParseMethod(req *request) (*request, error) {
 	switch method := tokens[0]; method {
 
 	case HTTP_GET:
-		return req, nil
+		return GetMethod(req, tokens)
 
 	case HTTP_HEAD:
 	case HTTP_POST:
@@ -115,7 +160,12 @@ func ParseRequest(req *request) (*request, error) {
 
 	req, err := ParseMethod(req)
 	if err != nil {
-		return nil, err
+
+		if req == nil {
+			return nil, err
+		}
+
+		LogMessage(LOG_WARNING, err.Error())
 	}
 
 	for _, line := range req.lines {
@@ -182,9 +232,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	ParseRequest(req)
+	req, err = ParseRequest(req)
+	if err != nil {
+		LogMessage(LOG_ERROR, "Parsing request : %s", err.Error())
+		os.Exit(1)
+	}
 
-	SendResponse(connection, []byte(HTTP_OK_REPONSE))
+	SendResponse(connection, req.res)
 
 	connection.Close()
 
