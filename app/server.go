@@ -46,23 +46,23 @@ const (
 )
 
 type response struct {
-	code    int
 	message string
+	code    int
 }
 
 type request struct {
+	res        *response
 	method     string
 	stringUrl  string
 	rawRequest string
 	lines      []string
 	length     uint
-	res        *response
 }
 
 func Ok() *response {
 	res := response{
 		code:    HTTP_OK,
-		message: fmt.Sprintf("%s %v OK %s", HTTP_VERSION, HTTP_OK, EOF_MARKER),
+		message: fmt.Sprintf("%s %v OK %s", HTTP_VERSION, HTTP_OK, EOF_DMARKER),
 	}
 
 	return &res
@@ -71,7 +71,7 @@ func Ok() *response {
 func NotFound() *response {
 	res := response{
 		code:    HTTP_NOT_FOUND,
-		message: fmt.Sprintf("%s %v Not Found %s", HTTP_VERSION, HTTP_NOT_FOUND, EOF_MARKER),
+		message: fmt.Sprintf("%s %v Not Found %s", HTTP_VERSION, HTTP_NOT_FOUND, EOF_DMARKER),
 	}
 
 	return &res
