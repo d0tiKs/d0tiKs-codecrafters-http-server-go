@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 )
 
 const (
 
-	// PROGRAM PROPERTIES
+	// CONNECTION PROPERTIES
 	PORT = "8080"
+
+	// REQUEST PROPERTIES
+	REQUEST_CHUNK_LENGTH = 1024
+	REQUEST_MAX_LENGTH   = 1024 * 1024
 
 	// HTTP HEADER
 	EOF_MARKER  = "\r\n"
@@ -42,10 +47,29 @@ const (
 	LOG_WARNING = "WARNING"
 )
 
+type request struct {
+	method     string
+	path       string
+	rawRequest string
+	lines      []string
+	length     uint
+}
+
 func LogMessage(logLevel string, format string, vargs ...interface{}) (n int, err error) {
 	logLevelToken := fmt.Sprintf("[%s] ", logLevel)
 	message := fmt.Sprintf(format, vargs...)
 	return fmt.Println(logLevelToken + message)
+}
+
+func BuildError(err error, format string, vars ...interface{}) error {
+	errorMessage := fmt.Sprintf(format, vars...)
+
+	if err == nil {
+		return errors.New(errorMessage)
+	}
+
+	embeddedError := fmt.Sprintf("\nSee error bellow:\n%s", err.Error())
+	return errors.New(errorMessage + embeddedError)
 }
 
 func SendResponse(connection net.Conn, response []byte) {
@@ -58,47 +82,76 @@ func SendResponse(connection net.Conn, response []byte) {
 	}
 }
 
-func BuildLine(data []byte, length int) (int, error) {
-	lineLen := 0
-	currentChar := byte(0)
-	lastChar := byte(0)
-
-	i := 0
-	for currentChar != '\n' && lastChar != '\r' {
-		i += 1
-
-		if i > length {
-			return i, errors.New("reached the end of the string without finding EOF MARKER")
-		}
-
-		lastChar = data[i-1]
-		currentChar = data[i]
-	}
-
-	lineLen = i - 1
-
-	return lineLen, nil
+func GetMethod(req *request) (*request, error) {
+	return req, nil
 }
 
-func ParseMethod(methodLine string) {
-	tokens := strings.Split(methodLine, " ")
+func ParseMethod(req *request) (*request, error) {
+	tokens := strings.Split(req.lines[0], " ")
 
-	for _, token := range tokens {
-		LogMessage(LOG_DEBUG, "token : %s", token)
+	switch method := tokens[0]; method {
+
+	case HTTP_GET:
+		return req, nil
+
+	case HTTP_HEAD:
+	case HTTP_POST:
+	case HTTP_PUT:
+	case HTTP_DELETE:
+	case HTTP_CONNECT:
+	case HTTP_OPTIONS:
+	case HTTP_TRACE:
+		return nil, BuildError(nil, "Non implemented HTTP method '%s'", method)
+	default:
+		return nil, BuildError(nil, "invalid HTTP method '%s'. Check RFC 7231 section 4.3", method)
 	}
+
+	return req, nil
 }
 
-func ParseRequest(request []byte, length int) error {
-	request_string := string(request)
-	lines := strings.Split(request_string, EOF_MARKER)
+func ParseRequest(req *request) (*request, error) {
+	lines := strings.Split(req.rawRequest, EOF_MARKER)
+	req.lines = lines
 
-	ParseMethod(lines[0])
+	req, err := ParseMethod(req)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, line := range lines {
+	for _, line := range req.lines {
 		LogMessage(LOG_DEBUG, line)
 	}
 
-	return nil
+	return req, nil
+}
+
+func ReadRequest(connection net.Conn) (*request, error) {
+	var reqStringBuilder strings.Builder
+
+	bytesRead := 0
+	doubleEOFReached := false
+	req := &request{}
+
+	for bytesRead <= REQUEST_MAX_LENGTH &&
+		!doubleEOFReached {
+		requestChunk := make([]byte, REQUEST_CHUNK_LENGTH)
+		chunkLength, err := connection.Read(requestChunk)
+		if err != nil {
+			return nil, BuildError(err, "Error reading request at len %v", bytesRead)
+		}
+
+		LogMessage(LOG_DEBUG, "chunklen : %v", chunkLength)
+		LogMessage(LOG_DEBUG, "chunk : %s", requestChunk)
+
+		bytesRead += chunkLength
+		doubleEOFReached = slices.Equal(requestChunk[chunkLength-4:chunkLength], []byte(EOF_DMARKER))
+		reqStringBuilder.Write(requestChunk)
+	}
+
+	req.rawRequest = reqStringBuilder.String()
+	req.length = uint(bytesRead)
+
+	return req, nil
 }
 
 func main() {
@@ -123,19 +176,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	request := make([]byte, 256)
-	len, err := connection.Read(request)
-	// if there's an error exit
+	req, err := ReadRequest(connection)
 	if err != nil {
 		LogMessage(LOG_ERROR, " Error reading request: %s", err.Error())
 		os.Exit(1)
 	}
 
-	ParseRequest(request, len)
+	ParseRequest(req)
 
 	SendResponse(connection, []byte(HTTP_OK_REPONSE))
 
 	connection.Close()
 
-	LogMessage(LOG_DEBUG, "resquest length is '%v'\n%s", len, request)
+	LogMessage(LOG_DEBUG, "resquest length is '%v'\n%s", req.length, req.rawRequest)
 }
