@@ -95,9 +95,7 @@ func BuildError(err error, format string, vars ...interface{}) error {
 }
 
 func SendResponse(connection net.Conn, res *response) {
-	// send the HTTP 200 OK response
 	_, err := connection.Write([]byte(res.message))
-	// if there's an error exit
 	if err != nil {
 		LogMessage(LOG_ERROR, "Error sending response: %s", err.Error())
 		os.Exit(1)
@@ -205,12 +203,9 @@ func ReadRequest(connection net.Conn) (*request, error) {
 }
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	LogMessage(LOG_DEBUG, "Logs from your program will appear here!")
 
-	// open tcp port
 	l, err := net.Listen("tcp", "0.0.0.0:"+PORT)
-	// if there's an error exit
 	if err != nil {
 		LogMessage(LOG_ERROR, "Failed to bind to port: "+PORT)
 		LogMessage(LOG_ERROR, err.Error())
@@ -218,9 +213,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// accept the connection
 	connection, err := l.Accept()
-	// if there's an error exit
 	if err != nil {
 		LogMessage(LOG_ERROR, " Error accepting connection: %s", err.Error())
 		os.Exit(1)
