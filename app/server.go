@@ -96,7 +96,7 @@ func Ok(reponseContent []byte, contentType string) *response {
 	}
 
 	if res.contentLength > 0 {
-		messageContentLength := fmt.Sprintf("Content Length: %v", res.contentLength)
+		messageContentLength := fmt.Sprintf("Content-Length: %v", res.contentLength)
 		strBuilder.WriteString(messageContentLength)
 		strBuilder.WriteString(EOF_DMARKER)
 
