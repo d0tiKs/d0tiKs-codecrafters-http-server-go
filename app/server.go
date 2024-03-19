@@ -28,22 +28,22 @@ const (
 	HTTP_VERSION = "HTTP/1.1"
 
 	// HTTP RESPONSE CODES
-	HTTP_OK        = 200
-	HTTP_NOT_FOUND = 404
+	STATUS_OK        = 200
+	STATUS_NOT_FOUND = 404
 
 	// HTTP REPONSE CONTENT TYPES
-	HTTP_CT_TEXT_PLAIN = "text/plain"
-	HTTP_CT_NO_TYPE    = ""
+	CONTENT_TYPE_TEXT_PLAIN = "text/plain"
+	CONTENT_TYPE_NO_TYPE    = ""
 
 	// HTTP REQUEST METHODS
-	HTTP_GET     = "GET"
-	HTTP_HEAD    = "HEAD"
-	HTTP_POST    = "POST"
-	HTTP_PUT     = "PUT"
-	HTTP_DELETE  = "DELETE"
-	HTTP_CONNECT = "CONNECT"
-	HTTP_OPTIONS = "OPTIONS"
-	HTTP_TRACE   = "TRACE"
+	METHOD_GET     = "GET"
+	METHOD_HEAD    = "HEAD"
+	METHOD_POST    = "POST"
+	METHOD_PUT     = "PUT"
+	METHOD_DELETE  = "DELETE"
+	METHOD_CONNECT = "CONNECT"
+	METHOD_OPTIONS = "OPTIONS"
+	METHOD_TRACE   = "TRACE"
 
 	// LOG LEVELS
 	LOG_DEBUG   = "DEBUG"
@@ -65,31 +65,27 @@ type request struct {
 	method     string
 	stringUrl  string
 	rawRequest string
+	userAgent  string
 	splitedUrl []string
 	lines      []string
 	length     uint
 }
 
 func Ok(reponseContent []byte, contentType string) *response {
-	contentLen := 0
-	if reponseContent != nil {
-		contentLen = len(reponseContent)
-	}
-
 	res := response{
-		code:          HTTP_OK,
-		contentLength: contentLen,
+		code:          STATUS_OK,
+		contentLength: len(reponseContent),
 		contentType:   contentType,
 		content:       reponseContent,
 	}
 
 	var strBuilder strings.Builder
 
-	messageCode := fmt.Sprintf("%s %v OK", HTTP_VERSION, HTTP_OK)
+	messageCode := fmt.Sprintf("%s %v OK", HTTP_VERSION, STATUS_OK)
 	strBuilder.WriteString(messageCode)
 	strBuilder.WriteString(EOF_MARKER)
 
-	if contentType != HTTP_CT_NO_TYPE {
+	if contentType != CONTENT_TYPE_NO_TYPE {
 		messageContentType := fmt.Sprintf("Content-Type: %s", contentType)
 		strBuilder.WriteString(messageContentType)
 		strBuilder.WriteString(EOF_MARKER)
@@ -111,8 +107,8 @@ func Ok(reponseContent []byte, contentType string) *response {
 
 func NotFound() *response {
 	res := response{
-		code:    HTTP_NOT_FOUND,
-		message: fmt.Sprintf("%s %v Not Found %s", HTTP_VERSION, HTTP_NOT_FOUND, EOF_DMARKER),
+		code:    STATUS_NOT_FOUND,
+		message: fmt.Sprintf("%s %v Not Found %s", HTTP_VERSION, STATUS_NOT_FOUND, EOF_DMARKER),
 	}
 
 	return &res
@@ -154,7 +150,17 @@ func EchoPath(req *request) (*response, error) {
 
 	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
 
-	return Ok([]byte(strBuilder.String()), HTTP_CT_TEXT_PLAIN), nil
+	return Ok([]byte(strBuilder.String()), CONTENT_TYPE_TEXT_PLAIN), nil
+}
+
+func UserAgentPath(req *request) (*response, error) {
+	var strBuilder strings.Builder
+
+	strBuilder.WriteString(req.userAgent)
+
+	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
+
+	return Ok([]byte(strBuilder.String()), CONTENT_TYPE_TEXT_PLAIN), nil
 }
 
 func GetPaths(req *request) (func(*request) (*response, error), error) {
@@ -164,16 +170,16 @@ func GetPaths(req *request) (func(*request) (*response, error), error) {
 		return EchoPath, nil
 	}
 
-	return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[0])
+	return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[1])
 }
 
-func GetRessource(req *request) (*response, error) {
+func GetResource(req *request) (*response, error) {
 	uri := req.stringUrl
 
 	LogMessage(LOG_DEBUG, "uri : %s", uri)
 
 	if uri == "/" {
-		return Ok(nil, HTTP_CT_NO_TYPE), nil
+		return Ok(nil, CONTENT_TYPE_NO_TYPE), nil
 	}
 
 	getPath, err := GetPaths(req)
@@ -185,11 +191,10 @@ func GetRessource(req *request) (*response, error) {
 }
 
 func GetMethod(req *request, linesTokens []string) (*request, error) {
-	req.method = HTTP_GET
+	req.method = METHOD_GET
 	req.stringUrl = linesTokens[1]
 
-	// TODO: search for the path to request try to get
-	res, err := GetRessource(req)
+	res, err := GetResource(req)
 	if err != nil {
 
 		if res == nil {
@@ -210,16 +215,16 @@ func ParseMethod(req *request) (*request, error) {
 
 	switch method := tokens[0]; method {
 
-	case HTTP_GET:
+	case METHOD_GET:
 		return GetMethod(req, tokens)
 
-	case HTTP_HEAD:
-	case HTTP_POST:
-	case HTTP_PUT:
-	case HTTP_DELETE:
-	case HTTP_CONNECT:
-	case HTTP_OPTIONS:
-	case HTTP_TRACE:
+	case METHOD_HEAD:
+	case METHOD_POST:
+	case METHOD_PUT:
+	case METHOD_DELETE:
+	case METHOD_CONNECT:
+	case METHOD_OPTIONS:
+	case METHOD_TRACE:
 		return nil, BuildError(nil, "Non implemented HTTP method '%s'", method)
 	default:
 		return nil, BuildError(nil, "invalid HTTP method '%s'. Check RFC 7231 section 4.3", method)
@@ -228,11 +233,20 @@ func ParseMethod(req *request) (*request, error) {
 	return req, nil
 }
 
+func ParseHeaders(req *request) (*request, error) {
+	return nil, BuildError(nil, "Not Implemented")
+}
+
 func ParseRequest(req *request) (*request, error) {
 	lines := strings.Split(req.rawRequest, EOF_MARKER)
 	req.lines = lines
 
-	req, err := ParseMethod(req)
+	req, err := ParseHeaders(req)
+	if err != nil {
+		LogMessage(LOG_WARNING, "Error while parsing headers : %s", err.Error())
+	}
+
+	req, err = ParseMethod(req)
 	if err != nil {
 
 		if req == nil {
