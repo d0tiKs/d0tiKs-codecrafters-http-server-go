@@ -11,6 +11,9 @@ import (
 
 const (
 
+	// DEBUG
+	VERBOSE = false
+
 	// CONNECTION PROPERTIES
 	PORT = "4221"
 
@@ -116,6 +119,10 @@ func NotFound() *response {
 }
 
 func LogMessage(logLevel string, format string, vargs ...interface{}) (n int, err error) {
+	if !VERBOSE && logLevel == LOG_DEBUG {
+		return 0, nil
+	}
+
 	logLevelToken := fmt.Sprintf("[%s] ", logLevel)
 	message := fmt.Sprintf(format, vargs...)
 	return fmt.Println(logLevelToken + message)
