@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -17,7 +18,7 @@ const (
 
 	ERROR_FD = STDERR
 
-	// DEBUG
+	// DEBUG PROPERTIES
 	VERBOSE = false
 
 	// CONNECTION PROPERTIES
@@ -27,17 +28,19 @@ const (
 	REQUEST_CHUNK_LENGTH = 1024
 	REQUEST_MAX_LENGTH   = 1024 * 1024
 
-	// HTTP HEADER
+	// HTTP HEADERS
 	EOF_MARKER  = "\r\n"
 	EOF_DMARKER = EOF_MARKER + EOF_MARKER
 
-	HTTP_VERSION = "HTTP/1.1"
+	HTTP_VERSION  = "HTTP/1.1"
+	KEY_USERAGENT = "User-Agent"
+	KEY_HOST      = "Host"
 
 	// HTTP RESPONSE CODES
 	STATUS_OK        = 200
 	STATUS_NOT_FOUND = 404
 
-	// HTTP REPONSE CONTENT TYPES
+	// HTTP RESPONSE CONTENT TYPES
 	CONTENT_TYPE_TEXT_PLAIN = "text/plain"
 	CONTENT_TYPE_NO_TYPE    = ""
 
@@ -71,7 +74,7 @@ type request struct {
 	method     string
 	stringUrl  string
 	rawRequest string
-	userAgent  string
+	headers    map[string]string
 	splitedUrl []string
 	lines      []string
 	length     uint
@@ -105,7 +108,6 @@ func Ok(reponseContent []byte, contentType string) *response {
 		strBuilder.WriteString(string(res.content))
 	}
 
-	strBuilder.WriteString(EOF_MARKER)
 	res.message = strBuilder.String()
 
 	return &res
@@ -169,7 +171,11 @@ func EchoPath(req *request) (*response, error) {
 func UserAgentPath(req *request) (*response, error) {
 	var strBuilder strings.Builder
 
-	strBuilder.WriteString(req.userAgent)
+	if len(req.headers[KEY_USERAGENT]) == 0 {
+		return NotFound(), BuildError(nil, "The header '%s' is not present in the request", KEY_USERAGENT)
+	}
+
+	strBuilder.WriteString(req.headers[KEY_USERAGENT])
 
 	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
 
@@ -179,11 +185,16 @@ func UserAgentPath(req *request) (*response, error) {
 func GetPaths(req *request) (func(*request) (*response, error), error) {
 	req.splitedUrl = strings.Split(req.stringUrl, "/")
 
-	if req.splitedUrl[1] == "echo" {
-		return EchoPath, nil
-	}
+	switch path := req.splitedUrl[1]; path {
 
-	return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[1])
+	case "echo":
+		return EchoPath, nil
+	case "user-agent":
+		return UserAgentPath, nil
+
+	default:
+		return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[1])
+	}
 }
 
 func GetResource(req *request) (*response, error) {
@@ -217,7 +228,7 @@ func GetMethod(req *request, linesTokens []string) (*request, error) {
 		err = BuildError(err, "Ressource not found at %s", req.stringUrl)
 	}
 
-	LogMessage(LOG_DEBUG, "response content : %s", res.message)
+	LogMessage(LOG_DEBUG, "response content :\n%s", res.message)
 
 	req.res = res
 	return req, err
@@ -247,7 +258,31 @@ func ParseMethod(req *request) (*request, error) {
 }
 
 func ParseHeaders(req *request) (*request, error) {
-	return nil, BuildError(nil, "Not Implemented")
+	req.headers = make(map[string]string)
+
+	if len(req.lines) <= 1 {
+		return req, nil
+	}
+
+	regex := regexp.MustCompile(`^[a-zA-Z\\-]+: .*`)
+
+	for _, line := range req.lines[1:] {
+		if len(line) == 0 || line == EOF_MARKER {
+			continue
+		}
+
+		matched := regex.MatchString(line)
+
+		if !matched && len(line) > 1 {
+			LogMessage(LOG_WARNING, "Unable to parse header '%s'", line)
+			continue
+		}
+
+		kvp := strings.SplitN(line, ": ", 2)
+		req.headers[kvp[0]] = kvp[1]
+	}
+
+	return req, nil
 }
 
 func ParseRequest(req *request) (*request, error) {
@@ -293,10 +328,11 @@ func ReadRequest(connection net.Conn) (*request, error) {
 
 		LogMessage(LOG_DEBUG, "chunklen : %v", chunkLength)
 		LogMessage(LOG_DEBUG, "chunk : %s", requestChunk)
+		// LogMessage(LOG_DEBUG, "chunkslince : %v", requestChunk)
 
 		bytesRead += chunkLength
 		doubleEOFReached = slices.Equal(requestChunk[chunkLength-4:chunkLength], []byte(EOF_DMARKER))
-		reqStringBuilder.Write(requestChunk)
+		reqStringBuilder.Write(requestChunk[:chunkLength])
 	}
 
 	req.rawRequest = reqStringBuilder.String()
@@ -338,5 +374,5 @@ func main() {
 
 	connection.Close()
 
-	LogMessage(LOG_DEBUG, "resquest length is '%v'\n%s", req.length, req.rawRequest)
+	LogMessage(LOG_DEBUG, "request length is '%v'\n%s", req.length, req.rawRequest)
 }
