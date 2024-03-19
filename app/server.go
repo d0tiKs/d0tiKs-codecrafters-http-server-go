@@ -28,6 +28,10 @@ const (
 	HTTP_OK        = 200
 	HTTP_NOT_FOUND = 404
 
+	// HTTP REPONSE CONTENT TYPES
+	HTTP_CT_TEXT_PLAIN = "text/plain"
+	HTTP_CT_NO_TYPE    = ""
+
 	// HTTP REQUEST METHODS
 	HTTP_GET     = "GET"
 	HTTP_HEAD    = "HEAD"
@@ -46,8 +50,11 @@ const (
 )
 
 type response struct {
-	message string
-	code    int
+	message       string
+	contentType   string
+	content       []byte
+	contentLength int
+	code          int
 }
 
 type request struct {
@@ -55,15 +62,46 @@ type request struct {
 	method     string
 	stringUrl  string
 	rawRequest string
+	splitedUrl []string
 	lines      []string
 	length     uint
 }
 
-func Ok() *response {
-	res := response{
-		code:    HTTP_OK,
-		message: fmt.Sprintf("%s %v OK %s", HTTP_VERSION, HTTP_OK, EOF_DMARKER),
+func Ok(reponseContent []byte, contentType string) *response {
+	contentLen := 0
+	if reponseContent != nil {
+		contentLen = len(reponseContent)
 	}
+
+	res := response{
+		code:          HTTP_OK,
+		contentLength: contentLen,
+		contentType:   contentType,
+		content:       reponseContent,
+	}
+
+	var strBuilder strings.Builder
+
+	messageCode := fmt.Sprintf("%s %v OK", HTTP_VERSION, HTTP_OK)
+	strBuilder.WriteString(messageCode)
+	strBuilder.WriteString(EOF_MARKER)
+
+	if contentType != HTTP_CT_NO_TYPE {
+		messageContentType := fmt.Sprintf("content Type: %s", contentType)
+		strBuilder.WriteString(messageContentType)
+		strBuilder.WriteString(EOF_MARKER)
+	}
+
+	if res.contentLength > 0 {
+		messageContentLength := fmt.Sprintf("Content Length: %v", res.contentLength)
+		strBuilder.WriteString(messageContentLength)
+		strBuilder.WriteString(EOF_DMARKER)
+
+		strBuilder.WriteString(string(res.content))
+	}
+
+	strBuilder.WriteString(EOF_MARKER)
+	res.message = strBuilder.String()
 
 	return &res
 }
@@ -102,12 +140,41 @@ func SendResponse(connection net.Conn, res *response) {
 	}
 }
 
-func GetRessource(uri string) (*response, error) {
-	if uri == "/" {
-		return Ok(), nil
+func EchoPath(req *request) (*response, error) {
+	var strBuilder strings.Builder
+
+	strBuilder.WriteString(strings.SplitN(req.stringUrl, "/", 3)[2])
+
+	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
+
+	return Ok([]byte(strBuilder.String()), HTTP_CT_TEXT_PLAIN), nil
+}
+
+func GetPaths(req *request) (func(*request) (*response, error), error) {
+	req.splitedUrl = strings.Split(req.stringUrl, "/")
+
+	if req.splitedUrl[1] == "echo" {
+		return EchoPath, nil
 	}
 
-	return nil, BuildError(nil, "Not implemented!")
+	return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[0])
+}
+
+func GetRessource(req *request) (*response, error) {
+	uri := req.stringUrl
+
+	LogMessage(LOG_DEBUG, "uri : %s", uri)
+
+	if uri == "/" {
+		return Ok(nil, HTTP_CT_NO_TYPE), nil
+	}
+
+	getPath, err := GetPaths(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return getPath(req)
 }
 
 func GetMethod(req *request, linesTokens []string) (*request, error) {
@@ -115,7 +182,7 @@ func GetMethod(req *request, linesTokens []string) (*request, error) {
 	req.stringUrl = linesTokens[1]
 
 	// TODO: search for the path to request try to get
-	res, err := GetRessource(req.stringUrl)
+	res, err := GetRessource(req)
 	if err != nil {
 
 		if res == nil {
@@ -124,6 +191,8 @@ func GetMethod(req *request, linesTokens []string) (*request, error) {
 
 		err = BuildError(err, "Ressource not found at %s", req.stringUrl)
 	}
+
+	LogMessage(LOG_DEBUG, "response content : %s", res.message)
 
 	req.res = res
 	return req, err
