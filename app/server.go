@@ -20,6 +20,8 @@ const (
 
 	ERROR_FD = STDERR
 
+	VERBOSE = true
+
 	DEFAULT_DATA_DIR       = "/dev/null"
 	FILE_CHUNK_BUFFER_SIZE = 512
 
@@ -203,9 +205,9 @@ func UserAgentPath(req *request) (*response, error) {
 	return Ok(res), nil
 }
 
-func DataPath(req *request) (*response, error) {
+func FilesPath(req *request) (*response, error) {
 	rootPath := *(config.dirPath)
-	filePath := rootPath + req.stringUrl
+	filePath := rootPath + strings.SplitN(req.stringUrl, "/", 3)[2]
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -249,8 +251,10 @@ func GetPaths(req *request) (func(*request) (*response, error), error) {
 		return EchoPath, nil
 	case "user-agent":
 		return UserAgentPath, nil
+	case "files":
+		return FilesPath, nil
 	default:
-		return DataPath, nil
+		return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[1])
 	}
 }
 
@@ -420,7 +424,7 @@ func handleConnection(connection net.Conn) {
 
 func initCLI() {
 	config.dirPath = flag.String("directory", DEFAULT_DATA_DIR, "The data directory the http server can access.")
-	config.verbose = flag.Bool("verbose", false, "Enable debug logs.")
+	config.verbose = flag.Bool("verbose", VERBOSE, "Enable debug logs.")
 
 	flag.Parse()
 
