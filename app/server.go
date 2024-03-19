@@ -11,6 +11,12 @@ import (
 
 const (
 
+	// PROGRAM PROPERTIES
+	STDOUT = 1
+	STDERR = 2
+
+	ERROR_FD = STDERR
+
 	// DEBUG
 	VERBOSE = false
 
@@ -121,7 +127,14 @@ func LogMessage(logLevel string, format string, vargs ...interface{}) (n int, er
 
 	logLevelToken := fmt.Sprintf("[%s] ", logLevel)
 	message := fmt.Sprintf(format, vargs...)
-	return fmt.Println(logLevelToken + message)
+
+	outfd := os.Stdout
+
+	if ERROR_FD != STDOUT && logLevel != LOG_INFO {
+		outfd = os.Stderr
+	}
+
+	return fmt.Fprintln(outfd, logLevelToken+message)
 }
 
 func BuildError(err error, format string, vars ...interface{}) error {
