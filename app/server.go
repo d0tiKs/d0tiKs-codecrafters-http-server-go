@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"regexp"
@@ -18,11 +20,12 @@ const (
 
 	ERROR_FD = STDERR
 
-	// DEBUG PROPERTIES
-	VERBOSE = false
+	DEFAULT_DATA_DIR       = "/dev/null"
+	FILE_CHUNK_BUFFER_SIZE = 512
 
 	// CONNECTION PROPERTIES
-	PORT = "4221"
+	PORT         = "4221"
+	LISTENING_IP = "0.0.0.0"
 
 	// REQUEST PROPERTIES
 	REQUEST_CHUNK_LENGTH = 1024
@@ -41,8 +44,9 @@ const (
 	STATUS_NOT_FOUND = 404
 
 	// HTTP RESPONSE CONTENT TYPES
-	CONTENT_TYPE_TEXT_PLAIN = "text/plain"
-	CONTENT_TYPE_NO_TYPE    = ""
+	CONTENT_TYPE_TEXT_PLAIN   = "text/plain"
+	CONTENT_TYPE_OCTET_STREAM = "application/octet-stream"
+	CONTENT_TYPE_NO_TYPE      = ""
 
 	// HTTP REQUEST METHODS
 	METHOD_GET     = "GET"
@@ -60,6 +64,11 @@ const (
 	LOG_ERROR   = "ERROR"
 	LOG_WARNING = "WARNING"
 )
+
+type processConfig struct {
+	dirPath *string
+	verbose *bool
+}
 
 type response struct {
 	message       string
@@ -80,13 +89,8 @@ type request struct {
 	length     uint
 }
 
-func Ok(reponseContent []byte, contentType string) *response {
-	res := response{
-		code:          STATUS_OK,
-		contentLength: len(reponseContent),
-		contentType:   contentType,
-		content:       reponseContent,
-	}
+func Ok(res *response) *response {
+	res.code = STATUS_OK
 
 	var strBuilder strings.Builder
 
@@ -94,11 +98,11 @@ func Ok(reponseContent []byte, contentType string) *response {
 	strBuilder.WriteString(messageCode)
 	strBuilder.WriteString(EOF_MARKER)
 
-	typeIsSet := contentType != CONTENT_TYPE_NO_TYPE
+	typeIsSet := res.contentType != CONTENT_TYPE_NO_TYPE
 	contentIsNotEmpty := res.contentLength > 0
 
 	if typeIsSet {
-		messageContentType := fmt.Sprintf("Content-Type: %s", contentType)
+		messageContentType := fmt.Sprintf("Content-Type: %s", res.contentType)
 		strBuilder.WriteString(messageContentType)
 		strBuilder.WriteString(EOF_MARKER)
 	}
@@ -108,16 +112,16 @@ func Ok(reponseContent []byte, contentType string) *response {
 		strBuilder.WriteString(messageContentLength)
 		strBuilder.WriteString(EOF_DMARKER)
 
-		strBuilder.WriteString(string(res.content))
+		strBuilder.Write(res.content)
 	}
 
-	if !(typeIsSet && contentIsNotEmpty) {
+	if !typeIsSet && !contentIsNotEmpty {
 		strBuilder.WriteString(EOF_MARKER)
 	}
 
 	res.message = strBuilder.String()
 
-	return &res
+	return res
 }
 
 func NotFound() *response {
@@ -130,7 +134,7 @@ func NotFound() *response {
 }
 
 func LogMessage(logLevel string, format string, vargs ...interface{}) (n int, err error) {
-	if !VERBOSE && logLevel == LOG_DEBUG {
+	if !*config.verbose && logLevel == LOG_DEBUG {
 		return 0, nil
 	}
 
@@ -172,7 +176,12 @@ func EchoPath(req *request) (*response, error) {
 
 	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
 
-	return Ok([]byte(strBuilder.String()), CONTENT_TYPE_TEXT_PLAIN), nil
+	res := new(response)
+	res.content = []byte(strBuilder.String())
+	res.contentType = CONTENT_TYPE_TEXT_PLAIN
+	res.contentLength = len(res.content)
+
+	return Ok(res), nil
 }
 
 func UserAgentPath(req *request) (*response, error) {
@@ -186,7 +195,49 @@ func UserAgentPath(req *request) (*response, error) {
 
 	LogMessage(LOG_DEBUG, "echo : %s", strBuilder.String())
 
-	return Ok([]byte(strBuilder.String()), CONTENT_TYPE_TEXT_PLAIN), nil
+	res := new(response)
+	res.content = []byte(strBuilder.String())
+	res.contentType = CONTENT_TYPE_TEXT_PLAIN
+	res.contentLength = len(res.content)
+
+	return Ok(res), nil
+}
+
+func DataPath(req *request) (*response, error) {
+	rootPath := *(config.dirPath)
+	filePath := rootPath + req.stringUrl
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var dataBuffer []byte
+	var cursor int64 = 0
+
+	chunkBuffer := make([]byte, FILE_CHUNK_BUFFER_SIZE)
+	dataRead, err := file.Read(chunkBuffer)
+	LogMessage(LOG_DEBUG, "dataRead : %v", dataRead)
+
+	for err == nil && dataRead > 0 {
+		LogMessage(LOG_DEBUG, "dataRead: %v, cursor: %v", dataRead, cursor)
+		cursor += int64(dataRead)
+		dataBuffer = append(dataBuffer, chunkBuffer...)
+		dataRead, err = file.ReadAt(chunkBuffer, cursor)
+
+	}
+
+	if err != nil && err != io.EOF {
+		return nil, BuildError(err, "Error occured while reading file '%s', at index %v", filePath, cursor)
+	}
+
+	file.Close()
+
+	res := new(response)
+	res.content = dataBuffer
+	res.contentType = CONTENT_TYPE_OCTET_STREAM
+	res.contentLength = int(cursor)
+
+	return Ok(res), nil
 }
 
 func GetPaths(req *request) (func(*request) (*response, error), error) {
@@ -198,19 +249,18 @@ func GetPaths(req *request) (func(*request) (*response, error), error) {
 		return EchoPath, nil
 	case "user-agent":
 		return UserAgentPath, nil
-
 	default:
-		return nil, BuildError(nil, "Get Path '%s' is not implemented.", req.splitedUrl[1])
+		return DataPath, nil
 	}
 }
 
 func GetResource(req *request) (*response, error) {
 	uri := req.stringUrl
 
-	LogMessage(LOG_DEBUG, "uri : %s", uri)
-
 	if uri == "/" {
-		return Ok(nil, CONTENT_TYPE_NO_TYPE), nil
+		res := new(response)
+		res.contentType = CONTENT_TYPE_NO_TYPE
+		return Ok(res), nil
 	}
 
 	getPath, err := GetPaths(req)
@@ -235,7 +285,7 @@ func GetMethod(req *request, linesTokens []string) (*request, error) {
 		err = BuildError(err, "Ressource not found at %s", req.stringUrl)
 	}
 
-	LogMessage(LOG_DEBUG, "response content :\n%s", res.message)
+	// LogMessage(LOG_DEBUG, "response content :\n%s", res.message)
 
 	req.res = res
 	return req, err
@@ -311,8 +361,10 @@ func ParseRequest(req *request) (*request, error) {
 		LogMessage(LOG_WARNING, err.Error())
 	}
 
-	for _, line := range req.lines {
-		LogMessage(LOG_DEBUG, line)
+	if *config.verbose {
+		for _, line := range req.lines {
+			LogMessage(LOG_DEBUG, line)
+		}
 	}
 
 	return req, nil
@@ -333,8 +385,8 @@ func ReadRequest(connection net.Conn) (*request, error) {
 			return nil, BuildError(err, "Error reading request at len %v", bytesRead)
 		}
 
-		LogMessage(LOG_DEBUG, "chunklen : %v", chunkLength)
-		LogMessage(LOG_DEBUG, "chunk : %s", requestChunk)
+		// LogMessage(LOG_DEBUG, "chunklen : %v", chunkLength)
+		// LogMessage(LOG_DEBUG, "chunk : %s", requestChunk)
 		// LogMessage(LOG_DEBUG, "chunkslince : %v", requestChunk)
 
 		bytesRead += chunkLength
@@ -364,16 +416,25 @@ func handleConnection(connection net.Conn) {
 	SendResponse(connection, req.res)
 
 	connection.Close()
-
-	LogMessage(LOG_DEBUG, "request length is '%v'\n%s", req.length, req.rawRequest)
 }
 
-func main() {
-	LogMessage(LOG_DEBUG, "Logs from your program will appear here!")
+func initCLI() {
+	config.dirPath = flag.String("directory", DEFAULT_DATA_DIR, "The data directory the http server can access.")
+	config.verbose = flag.Bool("verbose", false, "Enable debug logs.")
 
-	l, err := net.Listen("tcp", "0.0.0.0:"+PORT)
+	flag.Parse()
+
+	LogMessage(LOG_DEBUG, "dirpath: %s, verbosity: %v", *config.dirPath, *config.verbose)
+}
+
+var config processConfig
+
+func main() {
+	initCLI()
+
+	l, err := net.Listen("tcp", LISTENING_IP+":"+PORT)
 	if err != nil {
-		LogMessage(LOG_ERROR, "Failed to bind to port: "+PORT)
+		LogMessage(LOG_ERROR, "Failed to bind to "+LISTENING_IP+":"+PORT)
 		LogMessage(LOG_ERROR, err.Error())
 
 		os.Exit(1)
