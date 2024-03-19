@@ -90,7 +90,7 @@ func Ok(reponseContent []byte, contentType string) *response {
 	strBuilder.WriteString(EOF_MARKER)
 
 	if contentType != HTTP_CT_NO_TYPE {
-		messageContentType := fmt.Sprintf("content Type: %s", contentType)
+		messageContentType := fmt.Sprintf("Content-Type: %s", contentType)
 		strBuilder.WriteString(messageContentType)
 		strBuilder.WriteString(EOF_MARKER)
 	}
