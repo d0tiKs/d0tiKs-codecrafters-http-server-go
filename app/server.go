@@ -348,23 +348,7 @@ func ReadRequest(connection net.Conn) (*request, error) {
 	return req, nil
 }
 
-func main() {
-	LogMessage(LOG_DEBUG, "Logs from your program will appear here!")
-
-	l, err := net.Listen("tcp", "0.0.0.0:"+PORT)
-	if err != nil {
-		LogMessage(LOG_ERROR, "Failed to bind to port: "+PORT)
-		LogMessage(LOG_ERROR, err.Error())
-
-		os.Exit(1)
-	}
-
-	connection, err := l.Accept()
-	if err != nil {
-		LogMessage(LOG_ERROR, " Error accepting connection: %s", err.Error())
-		os.Exit(1)
-	}
-
+func handleConnection(connection net.Conn) {
 	req, err := ReadRequest(connection)
 	if err != nil {
 		LogMessage(LOG_ERROR, " Error reading request: %s", err.Error())
@@ -382,4 +366,25 @@ func main() {
 	connection.Close()
 
 	LogMessage(LOG_DEBUG, "request length is '%v'\n%s", req.length, req.rawRequest)
+}
+
+func main() {
+	LogMessage(LOG_DEBUG, "Logs from your program will appear here!")
+
+	l, err := net.Listen("tcp", "0.0.0.0:"+PORT)
+	if err != nil {
+		LogMessage(LOG_ERROR, "Failed to bind to port: "+PORT)
+		LogMessage(LOG_ERROR, err.Error())
+
+		os.Exit(1)
+	}
+
+	for {
+		connection, err := l.Accept()
+		if err != nil {
+			LogMessage(LOG_ERROR, " Error accepting connection: %s", err.Error())
+			continue
+		}
+		go handleConnection(connection)
+	}
 }
