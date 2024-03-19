@@ -94,18 +94,25 @@ func Ok(reponseContent []byte, contentType string) *response {
 	strBuilder.WriteString(messageCode)
 	strBuilder.WriteString(EOF_MARKER)
 
-	if contentType != CONTENT_TYPE_NO_TYPE {
+	typeIsSet := contentType != CONTENT_TYPE_NO_TYPE
+	contentIsNotEmpty := res.contentLength > 0
+
+	if typeIsSet {
 		messageContentType := fmt.Sprintf("Content-Type: %s", contentType)
 		strBuilder.WriteString(messageContentType)
 		strBuilder.WriteString(EOF_MARKER)
 	}
 
-	if res.contentLength > 0 {
+	if contentIsNotEmpty {
 		messageContentLength := fmt.Sprintf("Content-Length: %v", res.contentLength)
 		strBuilder.WriteString(messageContentLength)
 		strBuilder.WriteString(EOF_DMARKER)
 
 		strBuilder.WriteString(string(res.content))
+	}
+
+	if !(typeIsSet && contentIsNotEmpty) {
+		strBuilder.WriteString(EOF_MARKER)
 	}
 
 	res.message = strBuilder.String()
